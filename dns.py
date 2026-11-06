@@ -91,11 +91,17 @@ def parse_response(data):
         rdlength = struct.unpack('!H', data[offset - 2:offset])[0]
         offset += rdlength
 
+    ns_names = []
     for _ in range(nscount):
         name, offset = read_name(data, offset)
-        offset += 2 + 2 + 4 + 2
-        rdlength = struct.unpack('!H', data[offset - 2:offset])[0]
+        rtype, rclass, ttl, rdlength = struct.unpack('!HHIH', data[offset:offset + 10])
+        offset += 10
+        rdata = data[offset:offset + rdlength]
         offset += rdlength
+
+        if rtype == 2:  # NS-запись
+            ns_name, _ = read_name(data, offset - rdlength)
+            ns_names.append(ns_name)
 
     ips = []
     for _ in range(arcount):
@@ -111,7 +117,7 @@ def parse_response(data):
             ip = '.'.join(map(str, rdata))
             ips.append(ip)
 
-    return ips
+    return ips, ns_names
 
 
 def send_query_to_server(server_ip, domain_name, qtype=1):
@@ -148,13 +154,23 @@ def resolve_domain(domain_name):
         zone_to_find = '.'.join(parts[i:])
         next_servers = []
 
+        if i == 0:
+            break  # <--- ВОТ ЭТО
+
         for server_ip in current_servers:
             response = send_query_to_server(server_ip, zone_to_find, qtype=2)
             if response:
-                ips = parse_response(response)
+                ips, ns_names = parse_response(response)
                 if ips:
                     next_servers = ips
                     break
+                elif ns_names:
+                    for ns_name in ns_names:
+                        ns_ip = resolve_domain(ns_name)
+                        if ns_ip:
+                            next_servers.append(ns_ip)
+                    if next_servers:
+                        break
 
         if not next_servers:
             return None
@@ -173,6 +189,11 @@ def resolve_domain(domain_name):
                 rtype, rclass, ttl, rdlength = struct.unpack('!HHIH', response[offset:offset + 10])
                 offset += 2 + 2 + 4 + 2
                 rdata = response[offset:offset + rdlength]
+
+                if rtype == 5:  # CNAME
+                    cname = read_name(response, offset - rdlength)[0]
+                    print(f"  CNAME: {cname}")
+                    return resolve_domain(cname)
 
                 if rtype == 1 and rdlength == 4:
                     ip = '.'.join(map(str, rdata))
