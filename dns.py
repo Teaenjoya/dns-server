@@ -42,7 +42,7 @@ def read_name(data, offset):
         if length == 0:
             offset += 1
             break
-        if (length & 0xC0) == 0xC0:
+        if (length & 0xC0) == 0xC0: #11000000
             pointer = struct.unpack('!H', data[offset:offset + 2])[0]
             pointer = pointer & 0x3FFF
             if not jumped:
@@ -74,18 +74,18 @@ def parse_query(data):
     qname = '.'.join(labels)
 
     qtype, qclass = struct.unpack('!HH', data[bytes_offset:bytes_offset + 4])
-    return id, qname, qtype, qclass, bytes_offset + 4
+    return id, qname, qtype, qclass, bytes_offset + 2 + 2
 
 
 def parse_response(data):
-    id, flags, qdcount, ancount, nscount, arcount = struct.unpack('!HHHHHH', data[:12])
+    id, flags, qcount, anscount, nscount, arcount = struct.unpack('!HHHHHH', data[:12])
     offset = 12
 
-    for _ in range(qdcount):
+    for _ in range(qcount):
         qname, offset = read_name(data, offset)
         offset += 2 + 2
 
-    for _ in range(ancount):
+    for _ in range(anscount):
         name, offset = read_name(data, offset)
         offset += 2 + 2 + 4 + 2
         rdlength = struct.unpack('!H', data[offset - 2:offset])[0]
@@ -131,7 +131,7 @@ def send_query_to_server(server_ip, domain_name, qtype=1):
 
     try:
         client_socket.sendto(packet, (server_ip, 53))
-        response_data, _ = client_socket.recvfrom(512)
+        response_data = client_socket.recvfrom(512)[0]
         return response_data
     except socket.timeout:
         print(f"Таймаут при запросе к {server_ip}")
@@ -163,15 +163,15 @@ def resolve_domain(domain_name):
     for server_ip in current_servers:
         response = send_query_to_server(server_ip, domain_name, qtype=1)
         if response:
-            id, flags, qdcount, ancount, nscount, arcount = struct.unpack('!HHHHHH', response[:12])
-            if ancount > 0:
+            id, flags, qdcount, anscount, nscount, arcount = struct.unpack('!HHHHHH', response[:12])
+            if anscount > 0:
                 offset = 12
                 offset = read_name(response, offset)[1]
-                offset += 4
+                offset += 2 + 2
 
                 name, offset = read_name(response, offset)
                 rtype, rclass, ttl, rdlength = struct.unpack('!HHIH', response[offset:offset + 10])
-                offset += 10
+                offset += 2 + 2 + 4 + 2
                 rdata = response[offset:offset + rdlength]
 
                 if rtype == 1 and rdlength == 4:
@@ -179,7 +179,6 @@ def resolve_domain(domain_name):
                     return ip
 
     return None
-
 
 
 def build_response(query_data, qname_offset, qtype, qclass, resolved_ip=None):
